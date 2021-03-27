@@ -4,64 +4,67 @@ const Post = require('../posts/post.entity');
 const mongoose = require('mongoose');
 
 class UserService {
-    create(payload) {
-        const user = new User(payload);
-        return user.save();
+  create(payload) {
+    const user = new User(payload);
+    return user.save();
+  }
+
+  findAll(query) {
+    const { offset, limit, sort, asc } = query;
+
+    const sortObj = {};
+    sortObj[sort] = asc === 'true' ? 'asc' : 'desc';
+
+    return User.find({}, { password: false })
+      .skip(+offset)
+      .limit(+limit)
+      .sort(sortObj)
+      .exec();
+  }
+
+  async findOne(id) {
+    const user = await User.findById(id).exec();
+    if (!user) {
+      throw new NotFound(`User with id ${id} not found.`);
     }
+    return user;
+  }
 
-    findAll(query) {
-        const { offset, limit, sort, asc } = query;
+  async delete(id) {
+    // Remember to install Replica mode of mongodb in your system to enable
+    // transactions. https://docs.mongodb.com/manual/tutorial/deploy-replica-set/
 
-        const sortObj = {};
-        sortObj[sort] = asc === 'true' ? 'asc' : 'desc';
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-        return User.find({}, { password: false })
-            .skip(+offset)
-            .limit(+limit)
-            .sort(sortObj)
-            .exec();
-    }
-
-    async findOne(id) {
-        const user = await User.findById(id).exec();
-        if (!user) {
-            throw new NotFound(`User with id ${id} not found.`);
+    try {
+      const user = await this.findOne(id);
+      await Post.deleteMany(
+        { creator: user._id },
+        {
+          session,
         }
-        return user;
+      );
+      const removedUser = await user.remove({
+        session,
+      });
+      await session.commitTransaction();
+      return removedUser;
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
     }
+  }
 
-    async delete(id) {
-        // Remember to install Replica mode of mongodb in your system to enable
-        // transactions. https://docs.mongodb.com/manual/tutorial/deploy-replica-set/
+  async update(id, payload) {
+    let user = await this.findOne(id);
 
-        const session = await mongoose.startSession();
-        session.startTransaction();
+    user = Object.assign(user, payload);
 
-        try {
-            const user = await this.findOne(id);
-            await Post.deleteMany({ creator: user._id }, {
-                session
-            });
-            const removedUser = await user.remove({
-                session
-            });
-            await session.commitTransaction();
-            return removedUser;
-        } catch (err) {
-            await session.abortTransaction();
-            throw err;
-        } finally {
-            session.endSession();
-        }
-    }
-
-    async update(id, payload) {
-        let user = await this.findOne(id);
-
-        user = Object.assign(user, payload);
-
-        return user.save();
-    }
+    return user.save();
+  }
 }
 
 module.exports = new UserService();
